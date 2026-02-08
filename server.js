@@ -7,8 +7,12 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// 미들웨어
-app.use(cors());
+// 미들웨어 - CORS 설정 추가
+app.use(cors({
+  origin: '*', // 모든 도메인 허용
+  methods: ['GET', 'POST'],
+  credentials: true
+}));
 app.use(express.json());
 
 // Google Gemini AI 초기화
