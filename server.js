@@ -1,23 +1,23 @@
-// server.js - Google Gemini API 백엔드 서버
-
+// server.js - Anthropic Claude API 백엔드 서버
 const express = require('express');
 const cors = require('cors');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const Anthropic = require('@anthropic-ai/sdk');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // 미들웨어 - CORS 설정 추가
 app.use(cors({
-  origin: '*', // 모든 도메인 허용
-  methods: ['GET', 'POST'],
-  credentials: true
+    origin: '*',
+    methods: ['GET', 'POST'],
+    credentials: true
 }));
 app.use(express.json());
 
-// Google Gemini AI 초기화
-// 환경 변수로 API 키를 설정하세요
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
+// Anthropic Claude AI 초기화
+const anthropic = new Anthropic({
+    apiKey: process.env.ANTHROPIC_API_KEY,
+});
 
 // 오라운트 커피 정보 데이터베이스
 const COFFEE_DATABASE = `
@@ -30,8 +30,7 @@ const COFFEE_DATABASE = `
    - 원산지: 콜롬비아 40%, 케냐 20%, 과테말라 40%
    - 로스팅: 미디엄 다크
    - 맛: 진하고 고소한 바디감, 다크 초콜릿과 견과류 풍미
-   - 산미: 낮음
-   - 바디: 진함
+   - 산미: 낮음 - 바디: 진함
    - 추천: 라떼, 카푸치노, 에스프레소에 최적
    - 특징: 구글 오피스 납품 원두, 베스트셀러
 
@@ -39,8 +38,7 @@ const COFFEE_DATABASE = `
    - 원산지: 에티오피아 싱글 오리진
    - 로스팅: 라이트 미디엄
    - 맛: 플로랄 향미의 아로마, 시트러스와 베리 향
-   - 산미: 높음
-   - 바디: 가벼움
+   - 산미: 높음 - 바디: 가벼움
    - 추천: 핸드드립, 푸어오버에 최적
    - 특징: 꽃향기와 과일향이 풍부, 산미 애호가용
 
@@ -48,8 +46,7 @@ const COFFEE_DATABASE = `
    - 원산지: 브라질 블렌드
    - 로스팅: 미디엄
    - 맛: 부드럽고 달콤한 맛, 캐러멜과 초콜릿 풍미
-   - 산미: 중간
-   - 바디: 중간
+   - 산미: 중간 - 바디: 중간
    - 추천: 아메리카노, 콜드브루에 좋음
    - 특징: 초보자도 부담없이 즐길 수 있는 밸런스
 
@@ -87,8 +84,8 @@ const SYSTEM_PROMPT = `당신은 오라운트 커피의 친절한 원두 추천 
 ${COFFEE_DATABASE}
 
 고객의 취향을 파악하여 가장 적합한 원두를 추천해주세요.
-다음 규칙을 따라주세요:
 
+다음 규칙을 따라주세요:
 1. 친근하고 전문적인 톤 사용
 2. 2-4문장으로 간결하게 답변
 3. 구체적인 원두 이름과 가격 언급
@@ -104,70 +101,65 @@ ${COFFEE_DATABASE}
 
 // 채팅 엔드포인트
 app.post('/api/chat', async (req, res) => {
-  try {
-    const { message, history = [] } = req.body;
+    try {
+        const { message, history = [] } = req.body;
 
-    if (!message) {
-      return res.status(400).json({ error: '메시지가 필요합니다.' });
+        if (!message) {
+            return res.status(400).json({ error: '메시지가 필요합니다.' });
+        }
+
+        // Claude 메시지 히스토리 구성
+        const messages = history.map(msg => ({
+            role: msg.role === 'assistant' ? 'assistant' : 'user',
+            content: msg.content
+        }));
+
+        // 현재 사용자 메시지 추가
+        messages.push({
+            role: 'user',
+            content: message
+        });
+
+        // Claude API 호출
+        const response = await anthropic.messages.create({
+            model: 'claude-sonnet-4-20250514',
+            max_tokens: 500,
+            system: SYSTEM_PROMPT,
+            messages: messages,
+        });
+
+        const reply = response.content[0].text;
+
+        res.json({ reply });
+
+    } catch (error) {
+        console.error('Claude API 오류:', error);
+        res.status(500).json({
+            error: '죄송합니다. 일시적인 오류가 발생했습니다.',
+            details: error.message
+        });
     }
-
-    // Gemini Pro 모델 사용
-    const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
-
-    // 대화 히스토리 구성
-    const chatHistory = history.map(msg => ({
-      role: msg.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: msg.content }]
-    }));
-
-    // 채팅 시작
-    const chat = model.startChat({
-      history: chatHistory,
-      generationConfig: {
-        maxOutputTokens: 500,
-        temperature: 0.7,
-      },
-    });
-
-    // 시스템 프롬프트와 사용자 메시지 결합
-    const fullMessage = chatHistory.length === 0 
-      ? `${SYSTEM_PROMPT}\n\n사용자: ${message}`
-      : message;
-
-    const result = await chat.sendMessage(fullMessage);
-    const response = await result.response;
-    const reply = response.text();
-
-    res.json({ reply });
-
-  } catch (error) {
-    console.error('Gemini API 오류:', error);
-    res.status(500).json({ 
-      error: '죄송합니다. 일시적인 오류가 발생했습니다.',
-      details: error.message 
-    });
-  }
 });
 
 // 헬스 체크
 app.get('/health', (req, res) => {
-  res.json({ status: 'OK', message: 'Oraund Chatbot Server is running' });
+    res.json({ status: 'OK', message: 'Oraund Chatbot Server is running' });
 });
 
 // 루트 엔드포인트
 app.get('/', (req, res) => {
-  res.json({ 
-    message: 'Oraund Chatbot API',
-    endpoints: {
-      chat: 'POST /api/chat',
-      health: 'GET /health'
-    }
-  });
+    res.json({
+        message: 'Oraund Chatbot API',
+        endpoints: {
+            chat: 'POST /api/chat',
+            health: 'GET /health'
+        }
+    });
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 서버가 포트 ${PORT}에서 실행중입니다`);
-  console.log(`💚 AMG F1 Petronas 컬러로 오라운트 챗봇 준비 완료!`);
+    console.log(`🚀 서버가 포트 ${PORT}에서 실행중입니다`);
+    console.log(`☕ 오라운트 AI 챗봇 (Powered by Claude) 준비 완료!`);
 });
 
 module.exports = app;
