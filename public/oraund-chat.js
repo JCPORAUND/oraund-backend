@@ -537,6 +537,35 @@
     return sendMessage(text);
   };
 
+  // -- Chip rewire -------------------------------------------------------
+  // The rendered Cafe24 HTML has MALFORMED onclicks on the chip buttons —
+  // the opening quote is missing: onclick="askChip(고소하고 묵직한 원두 추천해줘')"
+  // That's a SyntaxError, so the browser compiles onclick to `null` and
+  // clicks silently no-op even with window.askChip defined. We can't fix
+  // the source HTML from here (it's rendered server-side by Cafe24), so
+  // we rewire: strip the broken onclick and attach a real click listener.
+  //
+  // Regex tolerates both malformed `askChip(text')` and well-formed
+  // `askChip('text')` / `askChip("text")` patterns, so this is a no-op
+  // if someone fixes the HTML later.
+  function rewireChips() {
+    const chips = document.querySelectorAll('[onclick*="askChip"]');
+    chips.forEach((chip) => {
+      if (chip.__oraundWired) return;
+      const attr = chip.getAttribute('onclick') || '';
+      // Match askChip( ... ) and pull the inner text, tolerating missing quotes
+      const m = attr.match(/askChip\s*\(\s*['"]?([^'")]*)['"]?\s*\)/);
+      const text = m ? m[1].trim() : '';
+      chip.removeAttribute('onclick');
+      if (!text) return;
+      chip.__oraundWired = true;
+      chip.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        sendMessage(text);
+      });
+    });
+  }
+
   // Also expose a namespaced object for explicit calls
   window.oraundChat = {
     send: sendMessage,
@@ -561,6 +590,15 @@
     injectConsultModal();
     injectConsultBar();
     restoreChatUI();
+    rewireChips();
+
+    // Chips can be re-rendered when the AI panel toggles or when the
+    // welcome screen is shown/hidden. Observe body-level mutations and
+    // re-run rewire. Idempotent via the __oraundWired flag.
+    try {
+      const mo = new MutationObserver(() => rewireChips());
+      mo.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['onclick'] });
+    } catch (e) { /* older browser — boot-time rewire still happened */ }
 
     // Global listeners (attach once)
     // Click outside modal → close
