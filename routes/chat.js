@@ -4,13 +4,18 @@
 //   1. session_id 지원 (클라이언트 localStorage UUID). 없으면 auto-gen.
 //   2. 매 턴 user + assistant 메시지를 chat_log 에 저장 (DB 없어도 앱 동작).
 //   3. 불만족 신호(6종) 자동 탐지 → assistant 행의 flags 컬럼에 기록.
-//   4. B2C / B2B 페르소나 분기 + 모델 라우팅:
+//   4. 페르소나 분기 + 서브 페르소나 힌트 주입 + 모델 라우팅:
 //        - 첫 턴 (history.length === 0) → 무조건 Haiku + B2C 프롬프트
 //          (첫 응답 속도가 체감을 결정하므로 속도 우선)
 //        - 이후 턴 → persona.classifyFromHistory() 결과에 따라
-//            b2b  → Sonnet + B2B 프롬프트 (복잡한 견적·상담)
-//            b2c  → Haiku  + B2C 프롬프트 (친근, 빠름)
-//            else → Haiku  + B2C 프롬프트 (기본)
+//            b2b.oem  → Sonnet + B2B + OEM 힌트 (🚨 즉시 휴먼 에스컬레이션)
+//            b2b.*    → Sonnet + B2B + 서브 힌트
+//            b2b      → Sonnet + B2B (서브 힌트 없음)
+//            b2c.*    → Haiku  + B2C + 서브 힌트
+//            b2c / unknown → Haiku + B2C (서브 힌트 없음)
+//
+// DB 에는 persona='b2b'|'b2c'|'unknown', flags.subpersona='b2b.oem' 등 기록 →
+// 나중에 서브 페르소나별 유입/전환 분석 가능.
 //
 // 모델은 환경변수로 재정의 가능:
 //   CLAUDE_MODEL_HAIKU  (기본: claude-haiku-4-5)
@@ -23,7 +28,7 @@ const Anthropic = require('@anthropic-ai/sdk');
 const db = require('../db');
 const persona = require('../lib/persona');
 const dissat = require('../lib/dissatisfaction');
-const { B2C_PROMPT, B2B_PROMPT } = require('../prompts');
+const { buildSystemPrompt } = require('../prompts');
 
 const router = express.Router();
 
@@ -81,33 +86,66 @@ async function logChatRow(row) {
 }
 
 
-// === 페르소나 / 모델 라우팅 ===
+// === 페르소나 / 서브 페르소나 / 모델 라우팅 ===
 //
 // routeRequest 는 이 턴에 어떤 모델 + 시스템 프롬프트를 쓸지 결정한다.
+// 반환:
+//   {
+//     model:       string,     // Haiku or Sonnet ID
+//     system:      string,     // 최종 시스템 프롬프트 (base + 서브 힌트)
+//     persona:     string,     // 'b2b' | 'b2c' | 'unknown'
+//     subpersona:  string|null,// 'b2b.oem' 등
+//     subpersonaTags: string[],// 감지된 모든 서브 태그
+//     reason:      string,     // 라우팅 결정 이유 (로그용)
+//   }
+//
 // 규칙:
-//   1. 첫 턴 (history.length === 0) → Haiku + B2C 프롬프트
-//      - 체감 속도가 가장 중요한 순간. 아직 페르소나를 판정할 근거 없음.
-//      - 첫 인상은 친근한 톤이 기본값으로 더 안전함 (B2B 고객이 와도 실례 아님).
-//   2. 이후 턴 → persona.classifyFromHistory 로 분류
-//      - 'b2b'  → Sonnet + B2B 프롬프트
-//      - 'b2c'  → Haiku  + B2C 프롬프트
-//      - 'unknown' → Haiku + B2C 프롬프트 (기본은 속도 + 친근함)
+//   1. 첫 턴 (history.length === 0) → Haiku + B2C 베이스 (서브 힌트 없음)
+//      - 체감 속도가 가장 중요한 순간. 첫 인상은 친근한 톤이 안전한 기본값.
+//      - 서브 페르소나는 classifyFromHistory 가 currentMessage 만으로도 감지하긴 하지만,
+//        첫 턴에는 일단 힌트 없이 가볍게 받고, 2턴부터 본격 라우팅.
+//   2. 이후 턴 → persona.classifyFromHistory(history, message) 결과
+//      - persona === 'b2b' → Sonnet + B2B base + (서브 힌트 있으면 추가)
+//      - persona === 'b2c'/'unknown' → Haiku + B2C base + (서브 힌트 있으면 추가)
 function routeRequest(history, currentMessage) {
   const isFirstTurn = !Array.isArray(history) || history.length === 0;
+
   if (isFirstTurn) {
-    return { model: HAIKU, system: B2C_PROMPT, persona: 'unknown', reason: 'first-turn' };
+    return {
+      model: HAIKU,
+      system: buildSystemPrompt('b2c', null),
+      persona: 'unknown',
+      subpersona: null,
+      subpersonaTags: [],
+      reason: 'first-turn',
+    };
   }
 
-  const personaType = persona.classifyFromHistory(history, currentMessage);
-  if (personaType === 'b2b') {
-    return { model: SONNET, system: B2B_PROMPT, persona: 'b2b', reason: 'b2b-signal' };
+  const result = persona.classifyFromHistory(history, currentMessage);
+
+  if (result.persona === 'b2b') {
+    return {
+      model: SONNET,
+      system: buildSystemPrompt('b2b', result.subpersona),
+      persona: 'b2b',
+      subpersona: result.subpersona,
+      subpersonaTags: result.subpersonaTags,
+      reason: result.subpersona
+        ? `b2b-sub:${result.subpersona}`
+        : 'b2b-generic',
+    };
   }
-  // b2c 또는 unknown — 둘 다 Haiku + B2C 로
+
+  // b2c or unknown — 둘 다 Haiku + B2C 로
   return {
     model: HAIKU,
-    system: B2C_PROMPT,
-    persona: personaType,  // 'b2c' 또는 'unknown' 그대로 보존 → analytics 에 유용
-    reason: personaType === 'b2c' ? 'b2c-signal' : 'default',
+    system: buildSystemPrompt('b2c', result.subpersona),
+    persona: result.persona,                        // 'b2c' 또는 'unknown' 그대로
+    subpersona: result.subpersona,                  // null 일 수 있음
+    subpersonaTags: result.subpersonaTags,
+    reason: result.subpersona
+      ? `b2c-sub:${result.subpersona}`
+      : (result.persona === 'b2c' ? 'b2c-generic' : 'default'),
   };
 }
 
@@ -128,7 +166,11 @@ router.post('/api/chat', async (req, res) => {
 
     // 이번 턴의 모델 / 프롬프트 / 페르소나 결정
     const route = routeRequest(history, message);
-    console.log(`[chat] ${sessionId.slice(0,8)} turn=${history.length/2|0} persona=${route.persona} model=${route.model} (${route.reason})`);
+    console.log(
+      `[chat] ${sessionId.slice(0,8)} turn=${history.length/2|0} ` +
+      `persona=${route.persona} sub=${route.subpersona || '-'} ` +
+      `model=${route.model} (${route.reason})`
+    );
 
     // Claude messages 형식으로 변환
     const messages = history.map(m => ({
@@ -143,6 +185,10 @@ router.post('/api/chat', async (req, res) => {
       role: 'user',
       content: message,
       persona: route.persona,
+      flags: {
+        subpersona: route.subpersona,
+        subpersona_tags: route.subpersonaTags,
+      },
       user_agent: userAgent,
       ip_hash: ipHash,
     });
@@ -174,12 +220,22 @@ router.post('/api/chat', async (req, res) => {
       model: route.model,
       tokens_in: response.usage?.input_tokens,
       tokens_out: response.usage?.output_tokens,
-      flags: { ...flags, _route_reason: route.reason },
+      flags: {
+        ...flags,
+        subpersona: route.subpersona,
+        subpersona_tags: route.subpersonaTags,
+        _route_reason: route.reason,
+      },
       user_agent: userAgent,
       ip_hash: ipHash,
     });
 
-    res.json({ reply, sessionId, persona: route.persona });
+    res.json({
+      reply,
+      sessionId,
+      persona: route.persona,
+      subpersona: route.subpersona,
+    });
 
   } catch (error) {
     console.error('[chat] Claude API error:', error);
