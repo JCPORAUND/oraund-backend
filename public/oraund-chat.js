@@ -371,15 +371,25 @@
     updateConsultBarVisibility();
   }
 
-  async function sendMessage() {
+  async function sendMessage(explicitText) {
     const input = document.getElementById('chatInput');
     const sendBtn = document.getElementById('sendBtn');
-    if (!input) return;
-    const message = input.value.trim();
-    if (!message) return;
+
+    // Accept explicit text from callers like chip buttons:
+    //   sendMessage('산뜻한 과일향 원두')
+    // Falls back to reading #chatInput.value for the normal send-button flow.
+    let message;
+    if (typeof explicitText === 'string' && explicitText.trim()) {
+      message = explicitText.trim();
+      if (input) input.value = '';
+    } else {
+      if (!input) return;
+      message = input.value.trim();
+      if (!message) return;
+      input.value = '';
+    }
 
     hideWelcome();
-    input.value = '';
     if (sendBtn) sendBtn.disabled = true;
 
     addMessage('user', message);
@@ -518,6 +528,14 @@
   window.openConsultModal = openConsultModal;
   window.closeConsultModal = closeConsultModal;
   window.submitConsult    = submitConsult;
+
+  // Welcome-screen chip buttons on the rendered HTML use onclick="askChip('...')".
+  // The inline function isn't defined anywhere in our shared module, so chips
+  // were silently no-op-ing. Route them into sendMessage(explicitText).
+  window.askChip = (text) => {
+    if (typeof text !== 'string' || !text.trim()) return;
+    return sendMessage(text);
+  };
 
   // Also expose a namespaced object for explicit calls
   window.oraundChat = {
