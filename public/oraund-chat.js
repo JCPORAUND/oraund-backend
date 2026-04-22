@@ -537,6 +537,22 @@
     return sendMessage(text);
   };
 
+  // -- Header subtitle patch ---------------------------------------------
+  // The rendered Cafe24 HTML says "커피 전문가 · Powered by AI" in the
+  // AI panel header. Rewrite to attribute Claude specifically.
+  function patchHeader() {
+    // Scope: <div class="sub"> directly next to <div class="name">ORAUND AI</div>
+    const subs = document.querySelectorAll('.ai-panel .sub, #aiPanel .sub, .sub');
+    subs.forEach((el) => {
+      if (el.__oraundHeaderPatched) return;
+      const txt = (el.textContent || '').trim();
+      if (/Powered by AI\b/i.test(txt) || /커피 전문가\s*·\s*Powered by AI/i.test(txt)) {
+        el.textContent = '커피 전문가 · Powered by Anthropic Claude';
+        el.__oraundHeaderPatched = true;
+      }
+    });
+  }
+
   // -- Chip rewire -------------------------------------------------------
   // The rendered Cafe24 HTML has MALFORMED onclicks on the chip buttons —
   // the opening quote is missing: onclick="askChip(고소하고 묵직한 원두 추천해줘')"
@@ -590,13 +606,17 @@
     injectConsultModal();
     injectConsultBar();
     restoreChatUI();
+    patchHeader();
     rewireChips();
 
-    // Chips can be re-rendered when the AI panel toggles or when the
-    // welcome screen is shown/hidden. Observe body-level mutations and
-    // re-run rewire. Idempotent via the __oraundWired flag.
+    // Chips and header can be re-rendered when the AI panel toggles or
+    // when the welcome screen is shown/hidden. Observe body-level mutations
+    // and re-run both. Idempotent via the __oraundWired / __oraundHeaderPatched flags.
     try {
-      const mo = new MutationObserver(() => rewireChips());
+      const mo = new MutationObserver(() => {
+        patchHeader();
+        rewireChips();
+      });
       mo.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['onclick'] });
     } catch (e) { /* older browser — boot-time rewire still happened */ }
 
