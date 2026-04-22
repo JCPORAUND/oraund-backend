@@ -9,6 +9,7 @@
 
 require('dotenv').config();
 
+const path = require('path');
 const express = require('express');
 const cors = require('cors');
 
@@ -25,6 +26,16 @@ app.use(cors({
   credentials: true,
 }));
 app.use(express.json({ limit: '1mb' }));
+
+// === 정적 자산 — /public 의 파일을 그대로 서빙 ===
+// 주 용도: /oraund-chat.js (모든 오라운트 페이지에서 <script src>로 불러감)
+// cross-origin 요청이므로 CORS 헤더 명시 + 5분 캐시 (자주 바뀌는 건 아니지만 실험 중엔 강제 갱신 쉽게).
+app.use(express.static(path.join(__dirname, 'public'), {
+  maxAge: '5m',
+  setHeaders: (res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  },
+}));
 
 // === 라우트 마운트 ===
 app.use(chatRouter);
