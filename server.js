@@ -12,10 +12,13 @@ require('dotenv').config();
 const path = require('path');
 const express = require('express');
 const cors = require('cors');
+const cron = require('node-cron');
 
 const db = require('./db');
 const chatRouter = require('./routes/chat');
 const consultRouter = require('./routes/consult');
+const digestRouter = require('./routes/digest');
+const { sendDigest, yesterdayKstISO } = require('./lib/digest');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -40,6 +43,7 @@ app.use(express.static(path.join(__dirname, 'public'), {
 // === 라우트 마운트 ===
 app.use(chatRouter);
 app.use(consultRouter);
+app.use(digestRouter);
 
 // 헬스 체크 — 로드밸런서용. DB 연결도 확인.
 app.get('/health', async (req, res) => {
@@ -88,6 +92,26 @@ app.get('/', (req, res) => {
     console.log(`☕ 오라운트 AI 챗봇 (Powered by Claude) 준비 완료!`);
     console.log(`   DB: ${db.DISABLED ? 'DISABLED (DATABASE_URL missing)' : 'READY'}`);
   });
+
+  // === 일일 다이제스트 cron ===
+  // 매일 KST 09:00 (= UTC 00:00) 에 어제자 활동 요약을 관리자 메일로 발송.
+  // DIGEST_CRON_DISABLED=1 이면 스킵 (로컬/스테이징용).
+  if (process.env.DIGEST_CRON_DISABLED === '1') {
+    console.log('[digest] cron disabled by env (DIGEST_CRON_DISABLED=1)');
+  } else {
+    // node-cron 은 서버 타임존 기준. Railway 는 UTC 이므로 '0 0 * * *' = 매일 UTC 00:00 = KST 09:00.
+    cron.schedule('0 0 * * *', async () => {
+      const d = yesterdayKstISO();
+      console.log('[digest] cron fired — date:', d);
+      try {
+        const r = await sendDigest(d);
+        console.log('[digest] cron result:', r.status);
+      } catch (err) {
+        console.error('[digest] cron error:', err.message);
+      }
+    }, { timezone: 'UTC' });
+    console.log('[digest] cron scheduled: 0 0 * * * UTC (= 09:00 KST daily)');
+  }
 })();
 
 module.exports = app;
