@@ -60,6 +60,76 @@
   function injectStyles() {
     if (document.getElementById('oraund-chat-styles')) return;
     const css = `
+      /* ========== Right-side docked panel (desktop) ==========
+       * Host-page CSS makes #aiPanel a fullscreen overlay. We override it
+       * to a narrow right-docked panel so the page behind stays visible
+       * and scrollable. Mobile keeps the fullscreen layout (via default
+       * host-page rules).
+       */
+      @media (min-width: 769px) {
+        #aiPanel.ai-panel {
+          left: auto !important;
+          width: 420px !important;
+          max-width: 92vw !important;
+          border-left: 1px solid rgba(255,255,255,0.08);
+          box-shadow: -12px 0 40px rgba(0,0,0,0.45);
+          background: rgba(10,10,10,0.97) !important;
+        }
+        /* Un-center inner sections — the host sets max-width:680px + margin:auto,
+         * which leaves awkward whitespace inside a 420px panel. */
+        #aiPanel .ai-panel-messages,
+        #aiPanel .ai-panel-input,
+        #aiPanel .ai-panel-consult-bar {
+          max-width: none !important;
+        }
+        /* Slightly tighter padding inside narrow panel */
+        #aiPanel .ai-panel-messages { padding: 20px !important; }
+        #aiPanel .ai-panel-input    { padding: 14px 20px 20px !important; }
+        /* Welcome chips wrap to 2-col inside a narrow panel */
+        #aiPanel .ai-wchip { max-width: 46% !important; }
+        /* Host page sets body{overflow:hidden} on panel open to lock scroll.
+         * In side-panel mode we want the page behind to stay scrollable. */
+        body:has(#aiPanel.ai-panel.active) { overflow: auto !important; }
+        /* The floating mini-chat button would overlap the docked panel */
+        body:has(#aiPanel.ai-panel.active) .ai-mini-btn { display: none !important; }
+      }
+
+      /* ========== In-bubble page-navigation chips ==========
+       * When AI reply contains [label](https://oraund.com/...) URLs we render
+       * these as clickable chips below the bubble. Click → navigate host page,
+       * chat state is preserved via sessionStorage and auto-reopens on arrival.
+       */
+      .chat-nav-actions {
+        margin-top: 10px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .chat-nav-btn {
+        background: #0abab5;
+        color: #000;
+        border: none;
+        border-radius: 10px;
+        padding: 9px 14px;
+        font-size: 13px;
+        font-weight: 600;
+        font-family: inherit;
+        cursor: pointer;
+        transition: all 0.2s;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .chat-nav-btn:hover:not(:disabled) {
+        background: #30d5cf;
+        box-shadow: 0 2px 10px rgba(10,186,181,0.4);
+      }
+      .chat-nav-btn:disabled {
+        background: rgba(10,186,181,0.18);
+        color: rgba(255,255,255,0.55);
+        cursor: default;
+      }
+
       .ai-panel-consult-bar {
         display: none;
         max-width: 680px;
@@ -281,6 +351,330 @@
     modal.querySelector('#consultForm').addEventListener('submit', submitConsult);
   }
 
+  // ====== Panel DOM injection (Option A — widget drop-in) ======
+  // Some host pages (order / checkout / wholesale / sample pages) don't include
+  // the full chatbot DOM — just the `<script src=oraund-chat.js>` tag. This
+  // function creates the entire panel UI (mini button, panel, welcome chips,
+  // input row) + its CSS from scratch when missing, so the chat survives
+  // cross-page navigation from the AI's CTA chips.
+  //
+  // Idempotent: if #aiPanel already exists we skip DOM creation (the host
+  // page owns the UI); if #oraund-panel-styles exists we skip CSS injection.
+  // Uses color literals rather than var(--primary) because target pages may
+  // not define the design-token CSS variables.
+  function injectAiPanel() {
+    // If the host page already rendered #aiPanel (full index page), trust
+    // its own CSS + DOM and just wire up mini-btn / window.openAiPanel fallbacks
+    // if missing. No CSS or DOM injection needed.
+    //
+    // If #aiPanel is missing (order / checkout pages), inject both panel CSS
+    // AND the panel DOM from scratch — this is Option A's core purpose.
+    const panelAlreadyExists = !!document.getElementById('aiPanel');
+
+    // If we're about to inject fresh, hide any legacy chat UI that the order /
+    // wholesale pages ship with (short-form IDs #aiP, #aiFloatBar, etc.).
+    // Those legacy widgets use incompatible IDs (#chatIn instead of #chatInput)
+    // and inline sendMsg() that bypasses our shared state. Hiding them rather
+    // than removing means any inline onclick handlers can still no-op safely.
+    if (!panelAlreadyExists && !document.getElementById('oraund-legacy-hide')) {
+      const hide = document.createElement('style');
+      hide.id = 'oraund-legacy-hide';
+      hide.textContent = `
+        .ai-p, .ai-float-bar, #aiP, #aiFloatBar {
+          display: none !important;
+        }
+      `;
+      document.head.appendChild(hide);
+    }
+
+    if (!panelAlreadyExists && !document.getElementById('oraund-panel-styles')) {
+      const style = document.createElement('style');
+      style.id = 'oraund-panel-styles';
+      style.textContent = `
+        /* Injected by oraund-chat.js for pages lacking panel CSS.
+         * Scoped via #aiPanel so it won't collide with host rules. */
+        #aiPanel.ai-panel {
+          position: fixed;
+          top: 0; left: 0; right: 0; bottom: 0;
+          z-index: 1100;
+          display: none;
+          flex-direction: column;
+          background: rgba(0,0,0,0.92);
+          backdrop-filter: blur(30px);
+          -webkit-backdrop-filter: blur(30px);
+          font-family: 'Pretendard Variable', 'Pretendard', 'Noto Sans KR', -apple-system, BlinkMacSystemFont, sans-serif;
+        }
+        #aiPanel.ai-panel.active { display: flex; }
+        #aiPanel .ai-panel-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 16px 24px;
+          border-bottom: 1px solid rgba(255,255,255,0.08);
+        }
+        #aiPanel .ai-panel-brand { display: flex; align-items: center; gap: 10px; }
+        #aiPanel .ai-panel-brand .icon {
+          width: 32px; height: 32px; border-radius: 10px;
+          background: linear-gradient(135deg, #0abab5, #089e99);
+          display: flex; align-items: center; justify-content: center;
+          font-size: 16px; color: #000;
+        }
+        #aiPanel .ai-panel-brand .name {
+          font-family: 'Montserrat', sans-serif;
+          font-size: 16px; font-weight: 700; letter-spacing: 2px; color: #fff;
+        }
+        #aiPanel .ai-panel-brand .sub {
+          font-size: 11px; color: rgba(255,255,255,0.4); letter-spacing: 0.5px;
+        }
+        #aiPanel .ai-panel-close {
+          background: rgba(255,255,255,0.08);
+          border: 1px solid rgba(255,255,255,0.1);
+          border-radius: 10px;
+          width: 36px; height: 36px;
+          display: flex; align-items: center; justify-content: center;
+          cursor: pointer; color: #fff; font-size: 20px;
+          transition: all 0.2s;
+        }
+        #aiPanel .ai-panel-close:hover { background: rgba(255,255,255,0.15); }
+        #aiPanel .ai-panel-messages {
+          flex: 1; overflow-y: auto;
+          padding: 24px; max-width: 680px; margin: 0 auto; width: 100%;
+        }
+        #aiPanel .chat-bubble {
+          max-width: 85%;
+          padding: 14px 18px;
+          border-radius: 18px;
+          margin-bottom: 12px;
+          line-height: 1.6;
+          font-size: 14px;
+          white-space: pre-line;
+        }
+        #aiPanel .chat-bubble.user {
+          background: #0abab5; color: #000;
+          margin-left: auto; font-weight: 500;
+          border-bottom-right-radius: 4px;
+        }
+        #aiPanel .chat-bubble.assistant {
+          background: rgba(255,255,255,0.06);
+          color: #fff;
+          border: 1px solid rgba(255,255,255,0.08);
+          border-bottom-left-radius: 4px;
+        }
+        #aiPanel .chat-bubble.typing { color: rgba(255,255,255,0.4); }
+        #aiPanel .chat-bubble.typing::after {
+          content: ''; display: inline-block;
+          width: 4px; height: 4px;
+          background: #0abab5; border-radius: 50%;
+          margin-left: 6px;
+          animation: oraund-blink 1s infinite;
+        }
+        @keyframes oraund-blink { 0%,100%{opacity:.2} 50%{opacity:1} }
+        #aiPanel .ai-welcome { text-align: center; padding: 48px 20px 32px; }
+        #aiPanel .ai-welcome h3 { font-size: 20px; font-weight: 600; color: #fff; margin: 0 0 8px; }
+        #aiPanel .ai-welcome p {
+          font-size: 14px; color: rgba(255,255,255,0.45);
+          line-height: 1.6; margin: 0;
+        }
+        #aiPanel .ai-welcome-chips {
+          display: flex; flex-wrap: wrap; gap: 8px;
+          justify-content: center; margin-top: 24px;
+        }
+        #aiPanel .ai-wchip {
+          background: rgba(255,255,255,0.05);
+          border: 1px solid rgba(255,255,255,0.1);
+          border-radius: 12px;
+          padding: 12px 16px; font-size: 13px;
+          color: rgba(255,255,255,0.65);
+          cursor: pointer; transition: all 0.2s;
+          text-align: left; max-width: 200px;
+          font-family: inherit;
+        }
+        #aiPanel .ai-wchip:hover {
+          background: rgba(10,186,181,0.1);
+          border-color: rgba(10,186,181,0.3);
+          color: #3dd4cb;
+        }
+        #aiPanel .ai-wchip .emoji { font-size: 18px; display: block; margin-bottom: 6px; }
+        #aiPanel .ai-panel-input {
+          padding: 16px 24px 24px;
+          border-top: 1px solid rgba(255,255,255,0.06);
+          max-width: 680px; margin: 0 auto; width: 100%;
+        }
+        #aiPanel .ai-input-row {
+          display: flex; gap: 10px; align-items: center;
+          background: rgba(255,255,255,0.05);
+          border: 1px solid rgba(255,255,255,0.1);
+          border-radius: 14px;
+          padding: 4px 6px 4px 18px;
+          transition: border-color 0.3s;
+        }
+        #aiPanel .ai-input-row:focus-within { border-color: rgba(10,186,181,0.5); }
+        #aiPanel .ai-input-row input {
+          flex: 1; padding: 14px 0; border: none;
+          background: transparent; color: #fff;
+          font-size: 15px; font-family: inherit; outline: none;
+        }
+        #aiPanel .ai-input-row input::placeholder { color: rgba(255,255,255,0.3); }
+        #aiPanel .ai-send {
+          width: 40px; height: 40px; border-radius: 10px;
+          border: none; background: #0abab5; cursor: pointer;
+          display: flex; align-items: center; justify-content: center;
+          transition: all 0.2s; flex-shrink: 0;
+        }
+        #aiPanel .ai-send:hover { background: #3dd4cb; }
+        #aiPanel .ai-send:disabled { opacity: 0.3; cursor: not-allowed; }
+
+        /* Floating mini chat button */
+        .ai-mini-btn.oraund-injected {
+          position: fixed;
+          bottom: 28px; right: 28px;
+          width: 56px; height: 56px;
+          border-radius: 50%;
+          background: linear-gradient(135deg, #0abab5, #089e99);
+          border: none; cursor: pointer;
+          display: flex; align-items: center; justify-content: center;
+          z-index: 998;
+          box-shadow: 0 4px 24px rgba(10,186,181,0.4);
+          transition: all 0.25s cubic-bezier(0.4,0,0.2,1);
+        }
+        .ai-mini-btn.oraund-injected:hover {
+          transform: scale(1.08);
+          box-shadow: 0 6px 32px rgba(10,186,181,0.6);
+        }
+        .ai-mini-btn.oraund-injected .mini-icon {
+          font-size: 22px; color: #000; font-weight: 700;
+        }
+        @media (max-width: 768px) {
+          .ai-mini-btn.oraund-injected { bottom: 20px; right: 20px; width: 50px; height: 50px; }
+          #aiPanel .ai-panel-messages { padding: 16px; }
+          #aiPanel .ai-panel-input { padding: 12px 16px 20px; }
+          #aiPanel .ai-welcome-chips { gap: 6px; }
+          #aiPanel .ai-wchip { max-width: 48%; padding: 10px 12px; font-size: 12px; }
+        }
+      `;
+      document.head.appendChild(style);
+    }
+
+    // 2. Inject panel DOM if missing.
+    if (!panelAlreadyExists) {
+      const panel = document.createElement('div');
+      panel.className = 'ai-panel';
+      panel.id = 'aiPanel';
+      panel.setAttribute('role', 'dialog');
+      panel.setAttribute('aria-modal', 'true');
+      panel.innerHTML = `
+        <div class="ai-panel-header">
+          <div class="ai-panel-brand">
+            <div class="icon">✦</div>
+            <div>
+              <div class="name">ORAUND AI</div>
+              <div class="sub">커피 전문가 · Powered by Anthropic Claude</div>
+            </div>
+          </div>
+          <button class="ai-panel-close" type="button" aria-label="닫기">×</button>
+        </div>
+        <div class="ai-panel-messages" id="chatMessages">
+          <div class="ai-welcome" id="aiWelcome">
+            <h3>무엇을 도와드릴까요?</h3>
+            <p>오라운트의 AI 커피 전문가가 취향에 맞는<br>원두와 커피를 추천해드립니다.</p>
+            <div class="ai-welcome-chips">
+              <div class="ai-wchip" data-chip="고소하고 묵직한 원두 추천해줘" tabindex="0" role="button">
+                <span class="emoji">🫘</span>고소하고 묵직한 원두 추천
+              </div>
+              <div class="ai-wchip" data-chip="산뜻하고 과일향 나는 원두 뭐 있어?" tabindex="0" role="button">
+                <span class="emoji">🍊</span>산뜻한 과일향 원두
+              </div>
+              <div class="ai-wchip" data-chip="핸드드립 커피 맛있게 내리는 방법 알려줘" tabindex="0" role="button">
+                <span class="emoji">💧</span>핸드드립 내리는 법
+              </div>
+              <div class="ai-wchip" data-chip="이지드립 세트 어떤 맛으로 시작하면 좋아?" tabindex="0" role="button">
+                <span class="emoji">📦</span>이지드립 추천
+              </div>
+              <div class="ai-wchip" data-chip="카페인 적은 커피 찾고 있어" tabindex="0" role="button">
+                <span class="emoji">🌙</span>카페인 적은 커피
+              </div>
+              <div class="ai-wchip" data-chip="선물용 커피 세트 뭐가 좋아?" tabindex="0" role="button">
+                <span class="emoji">🎁</span>선물용 커피 세트
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="ai-panel-input">
+          <div class="ai-input-row">
+            <input type="text" id="chatInput" placeholder="오라운트 AI에게 물어보세요..." aria-label="오라운트 AI에게 물어보세요...">
+            <button class="ai-send" id="sendBtn" type="button" aria-label="메시지 전송">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2.5">
+                <path d="M5 12h14M12 5l7 7-7 7"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(panel);
+
+      // Wire up the controls (host HTML uses inline onclick; ours uses listeners)
+      panel.querySelector('.ai-panel-close').addEventListener('click', () => {
+        if (typeof window.closeAiPanel === 'function') window.closeAiPanel();
+      });
+      panel.querySelector('#sendBtn').addEventListener('click', () => sendMessage());
+      const input = panel.querySelector('#chatInput');
+      input.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          sendMessage();
+        }
+      });
+      // Welcome chips → send prompt. Relies on data-chip attribute we set above.
+      panel.querySelectorAll('.ai-wchip[data-chip]').forEach((chip) => {
+        const text = chip.getAttribute('data-chip');
+        chip.addEventListener('click', () => sendMessage(text));
+        chip.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            sendMessage(text);
+          }
+        });
+      });
+    }
+
+    // 3. Floating mini button if missing — opens the panel on click.
+    if (!document.querySelector('.ai-mini-btn')) {
+      const miniBtn = document.createElement('button');
+      miniBtn.className = 'ai-mini-btn oraund-injected';
+      miniBtn.type = 'button';
+      miniBtn.setAttribute('aria-label', 'AI 커피 상담');
+      miniBtn.innerHTML = `<span class="mini-icon">✦</span>`;
+      miniBtn.addEventListener('click', () => {
+        if (typeof window.openAiPanel === 'function') window.openAiPanel();
+      });
+      document.body.appendChild(miniBtn);
+    }
+
+    // 4. Define panel open/close if host didn't. Host versions may set
+    //    body.overflow='hidden' for fullscreen layout; ours keeps scrolling
+    //    enabled since we dock to the right on desktop (see injectStyles).
+    if (typeof window.openAiPanel !== 'function') {
+      window.openAiPanel = function () {
+        const p = document.getElementById('aiPanel');
+        if (!p) return;
+        p.classList.add('active');
+        setTimeout(() => {
+          const inp = document.getElementById('chatInput');
+          if (inp) inp.focus();
+        }, 300);
+      };
+    }
+    if (typeof window.closeAiPanel !== 'function') {
+      window.closeAiPanel = function () {
+        const p = document.getElementById('aiPanel');
+        if (!p) return;
+        p.classList.remove('active');
+        // Restore any scroll-lock host pages may have set
+        document.body.style.overflow = '';
+      };
+    }
+  }
+
   // Inject the consult-bar CTA inside #aiPanel (above .ai-panel-input)
   function injectConsultBar() {
     if (document.getElementById('consultBar')) return;
@@ -310,6 +704,101 @@
     bar.classList.toggle('active', hasAssistant);
   }
 
+  // ====== Page-navigation helpers ======
+  // AI replies sometimes include `[label](https://oraund.com/…)` URLs pointing
+  // to product/wholesale pages. We render these as nav-chip buttons so the
+  // user can jump to the page without leaving the chat.
+
+  // Extract oraund.com links from AI text (markdown [label](url) + bare URLs)
+  function extractOraundLinks(text) {
+    if (!text) return [];
+    const out = [];
+    const md = /\[([^\]\n]+)\]\((https?:\/\/(?:www\.)?oraund\.com\/[^\s)]+)\)/g;
+    let m;
+    while ((m = md.exec(text)) !== null) {
+      out.push({ label: m[1].trim(), url: m[2] });
+    }
+    // Also catch bare URLs not wrapped in markdown
+    const bare = /(?<!\()https?:\/\/(?:www\.)?oraund\.com\/[^\s)]+/g;
+    while ((m = bare.exec(text)) !== null) {
+      const u = m[0].replace(/[.,]$/, '');
+      if (!out.some(o => o.url === u)) out.push({ label: '페이지 열기', url: u });
+    }
+    return out;
+  }
+
+  // Strip markdown link syntax [label](url) from display text — keep just label
+  function stripLinkMarkdown(text) {
+    if (!text) return text;
+    return text.replace(/\[([^\]\n]+)\]\(https?:\/\/[^\s)]+\)/g, '$1');
+  }
+
+  // Compare two URLs by pathname (host-insensitive — handles localhost rewrite)
+  function isSameDestination(currentHref, targetUrl) {
+    try {
+      const a = new URL(currentHref);
+      const b = new URL(targetUrl);
+      return a.pathname === b.pathname;
+    } catch (e) { return false; }
+  }
+
+  // Local-dev accommodation: when testing on localhost, rewrite oraund.com
+  // URLs to same-origin so sessionStorage persists across the navigation.
+  function rewriteForLocalhost(url) {
+    const h = location.hostname;
+    if (h === 'localhost' || h === '127.0.0.1' || h.endsWith('.localhost')) {
+      return url.replace(/^https?:\/\/(?:www\.)?oraund\.com/i, location.origin);
+    }
+    return url;
+  }
+
+  function navigateToPage(url) {
+    try {
+      sessionStorage.setItem(STORAGE_KEY + '_autoopen', '1');
+    } catch (e) {}
+    window.location.href = rewriteForLocalhost(url);
+  }
+
+  // Render the chip buttons below an assistant bubble
+  function renderNavActions(bubbleEl, links) {
+    if (!bubbleEl || !links || !links.length) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'chat-nav-actions';
+    links.forEach(({ label, url }) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'chat-nav-btn';
+      const here = isSameDestination(location.href, rewriteForLocalhost(url));
+      if (here) {
+        btn.textContent = '✓ ' + label + ' (현재 페이지)';
+        btn.disabled = true;
+      } else {
+        btn.textContent = '📄 ' + label + ' →';
+        btn.addEventListener('click', () => navigateToPage(url));
+      }
+      wrap.appendChild(btn);
+    });
+    bubbleEl.appendChild(wrap);
+  }
+
+  // After navigation, re-open the panel automatically on arrival
+  function maybeAutoOpenPanel() {
+    try {
+      if (sessionStorage.getItem(STORAGE_KEY + '_autoopen') !== '1') return;
+      sessionStorage.removeItem(STORAGE_KEY + '_autoopen');
+    } catch (e) { return; }
+    // Let host page finish its own boot, then open panel + hide welcome
+    setTimeout(() => {
+      hideWelcome();
+      if (typeof window.openAiPanel === 'function') {
+        window.openAiPanel();
+      } else {
+        const panel = document.getElementById('aiPanel');
+        if (panel) panel.classList.add('active');
+      }
+    }, 250);
+  }
+
   // ====== UI helpers ======
   function getMessagesDiv() {
     return document.getElementById('chatMessages');
@@ -332,7 +821,9 @@
     const base = getBubbleClassBase();
     const b = document.createElement('div');
     b.className = `${base} ${role}` + (extraCls ? ' ' + extraCls : '');
-    b.textContent = content;
+    // AI replies: strip [label](url) markdown so only the label is visible,
+    // then render nav-action chips below the bubble (handled by caller).
+    b.textContent = role === 'assistant' ? stripLinkMarkdown(content) : content;
     div.appendChild(b);
     div.scrollTop = div.scrollHeight;
     return b;
@@ -356,7 +847,11 @@
     for (const m of messages) {
       const b = document.createElement('div');
       b.className = `${base} ${m.role}`;
-      b.textContent = m.content;
+      b.textContent = m.role === 'assistant' ? stripLinkMarkdown(m.content) : m.content;
+      if (m.role === 'assistant') {
+        const links = extractOraundLinks(m.content);
+        renderNavActions(b, links);
+      }
       div.appendChild(b);
     }
     div.scrollTop = div.scrollHeight;
@@ -366,7 +861,11 @@
   // ====== Public API — overrides any pre-existing inline funcs ======
   function addMessage(role, content) {
     messages.push({ role, content, ts: Date.now() });
-    appendBubble(role, content);
+    const bubble = appendBubble(role, content);
+    if (role === 'assistant' && bubble) {
+      const links = extractOraundLinks(content);
+      renderNavActions(bubble, links);
+    }
     persistChat();
     updateConsultBarVisibility();
   }
@@ -603,11 +1102,16 @@
   // ====== Boot ======
   function boot() {
     injectStyles();
+    // injectAiPanel must run before injectConsultBar (which requires #aiPanel),
+    // before restoreChatUI (which writes into #chatMessages), and before
+    // maybeAutoOpenPanel (which calls openAiPanel).
+    injectAiPanel();
     injectConsultModal();
     injectConsultBar();
     restoreChatUI();
     patchHeader();
     rewireChips();
+    maybeAutoOpenPanel();
 
     // Chips and header can be re-rendered when the AI panel toggles or
     // when the welcome screen is shown/hidden. Observe body-level mutations
