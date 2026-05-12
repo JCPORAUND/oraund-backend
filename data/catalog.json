@@ -36,17 +36,20 @@
   ],
 
   "b2c_order": {
-    "ordering_model": "맛 카테고리 → 중량 → 분쇄도 → 로스팅 옵션 선택식 (페이지에서 직접 주문)",
-    "weight_options": [
-      { "size": "200g",  "cups_approx": 20  },
-      { "size": "400g",  "cups_approx": 40  },
+    "ordering_model": "맛 카테고리 → 원두 → 중량 → 분쇄도 → 로스팅 신선도 선택식 (페이지에서 직접 주문)",
+    "weight_options_default": [
+      { "size": "400g",  "cups_approx": 40, "note": "가장 인기" },
       { "size": "1kg",   "cups_approx": 100, "note": "가성비" }
     ],
-    "grind_options": ["홀빈", "핸드드립", "에어로프레스(중간)", "프렌치프레스(굵게)", "에스프레소"],
+    "weight_options_zacaffe_only": [
+      { "size": "200g",  "cups_approx": 20, "note": "ZACAFFÈ 블렌드·디카페인 한정" }
+    ],
+    "grind_options": ["홀빈(원두)", "핸드드립", "에어로프레스(중간)", "프렌치프레스(굵게)", "에스프레소"],
     "roast_options": [
-      { "id": "fresh",    "name": "프레시 로스트",  "notes": "20시간 aging, 최대 5일 소요" },
-      { "id": "standard", "name": "스탠다드",       "notes": "로스팅 3일+ 경과, 5일째 풍미 피크" }
-    ]
+      { "id": "fresh",    "page_label": "갓 로스팅된 원두를 받고 싶습니다",     "notes": "로스팅 후 20시간 숙성 후 배송, 최대 5일 소요" },
+      { "id": "standard", "page_label": "갓 로스팅 되지 않아도 괜찮습니다", "notes": "로스팅 3일+ 경과 (5일째 풍미 피크). 빠른 배송. 기본값." }
+    ],
+    "_AI_NOTE": "원두 옵션은 위 중량·분쇄도·로스팅 신선도만 존재. 이 외의 옵션 (드립방식 사전선택, 추출 머신 추천 등)은 페이지에 없으니 환각 금지. 로스팅 옵션 라벨은 page_label 그대로 사용 권장."
   },
 
   "easydrip": {
