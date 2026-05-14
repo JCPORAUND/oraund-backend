@@ -153,7 +153,7 @@ function routeRequest(history, currentMessage) {
 // === POST /api/chat ===
 router.post('/api/chat', async (req, res) => {
   try {
-    const { message, history = [] } = req.body;
+    const { message, history = [], memberId, context } = req.body;
     let { sessionId } = req.body;
 
     if (!message) {
@@ -166,10 +166,38 @@ router.post('/api/chat', async (req, res) => {
 
     // 이번 턴의 모델 / 프롬프트 / 페르소나 결정
     const route = routeRequest(history, message);
+
+    // === Optional context injection ===
+    // If memberId is provided AND context indicates custom blend, fetch order summary
+    // and append to system prompt so Claude can give personalised recommendations.
+    let extraSystem = '';
+    if (memberId && context === 'customblend') {
+      try {
+        const cafe24 = require('../lib/cafe24-client');
+        const { summariseOrders } = require('../lib/order-summary');
+        const orders = await cafe24.getCustomerOrders(memberId, { limit: 30 });
+        const summary = summariseOrders(orders);
+        if (summary && summary.total_items > 0) {
+          extraSystem = `\n\n【고객 구매 내역 (커스텀 블렌드 추천용)】\n` +
+            `최근 주문 ${summary.order_count}건, 총 ${summary.total_items}개 상품.\n` +
+            `자주 산 원두: ${summary.top_beans.map(b => `${b.id}(×${b.qty})`).join(', ')}\n` +
+            `취향 분포: ${JSON.stringify(summary.taste_distribution)}\n` +
+            `주된 취향: ${summary.dominant_taste || '-'}\n\n` +
+            `위 내역을 참고해서 커스텀 블렌드를 추천하세요. 베이스(50%) · 두 번째(30%) · 세 번째(20%) 비율로 3종 선택.\n` +
+            `선택 가능한 베이스 3종: 콜롬비아 수프리모(고소), 에티오피아 아리차(산뜻), 케냐 엠부(달콤).\n` +
+            `2번째·3번째 6종: 수프리모, 아리차, 에티오피아 구지 타데, 과테말라 아카테낭고, 케냐 엠부, 콜롬비아 디카페인.`;
+        } else {
+          extraSystem = `\n\n【고객 구매 내역】\n해당 회원의 주문 내역이 없습니다. 일반 질문 기반으로 커스텀 블렌드를 추천하세요.`;
+        }
+      } catch (e) {
+        console.warn('[chat] order summary fetch failed:', e.message);
+      }
+    }
+
     console.log(
       `[chat] ${sessionId.slice(0,8)} turn=${history.length/2|0} ` +
       `persona=${route.persona} sub=${route.subpersona || '-'} ` +
-      `model=${route.model} (${route.reason})`
+      `model=${route.model} memberCtx=${memberId ? 'Y' : 'N'} (${route.reason})`
     );
 
     // Claude messages 형식으로 변환
@@ -197,7 +225,7 @@ router.post('/api/chat', async (req, res) => {
     const response = await anthropic.messages.create({
       model: route.model,
       max_tokens: 500,
-      system: route.system,
+      system: route.system + extraSystem,
       messages,
     });
 

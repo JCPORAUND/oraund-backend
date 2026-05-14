@@ -18,6 +18,7 @@ const db = require('./db');
 const chatRouter = require('./routes/chat');
 const consultRouter = require('./routes/consult');
 const digestRouter = require('./routes/digest');
+const cafe24Router = require('./routes/cafe24');
 const { sendDigest, yesterdayKstISO } = require('./lib/digest');
 
 const app = express();
@@ -44,6 +45,7 @@ app.use(express.static(path.join(__dirname, 'public'), {
 app.use(chatRouter);
 app.use(consultRouter);
 app.use(digestRouter);
+app.use(cafe24Router);
 
 // 헬스 체크 — 로드밸런서용. DB 연결도 확인.
 app.get('/health', async (req, res) => {

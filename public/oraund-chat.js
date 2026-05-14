@@ -907,10 +907,18 @@
     }
 
     try {
+      // Optional context (set by host page, e.g. product-customblend.html)
+      const ctx = (typeof window !== 'undefined' && window.__customBlendContext) || {};
       const response = await fetch(`${BACKEND_URL}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message, history: messages, sessionId: chatSessionId }),
+        body: JSON.stringify({
+          message,
+          history: messages,
+          sessionId: chatSessionId,
+          memberId: ctx.memberId || undefined,
+          context: ctx.context || undefined,
+        }),
       });
       if (!response.ok) throw new Error('서버 응답 오류');
       const data = await response.json();
