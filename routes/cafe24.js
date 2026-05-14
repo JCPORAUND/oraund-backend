@@ -59,6 +59,14 @@ router.get('/api/cafe24/health', async (req, res) => {
       hasToken: Boolean(token),
       expiresAt: token?.expires_at || null,
       mallId: cafe24.MALL_ID,
+      // Debug: env var visibility (lengths only — never echo secrets).
+      env: {
+        clientIdLen: (process.env.CAFE24_CLIENT_ID || '').length,
+        clientSecretLen: (process.env.CAFE24_CLIENT_SECRET || '').length,
+        mallIdRaw: process.env.CAFE24_MALL_ID || null,
+        baseUrl: process.env.BASE_URL || null,
+        nodeEnv: process.env.NODE_ENV || null,
+      },
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
