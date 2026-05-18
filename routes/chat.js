@@ -171,6 +171,7 @@ router.post('/api/chat', async (req, res) => {
     // If memberId is provided AND context indicates custom blend, fetch order summary
     // and append to system prompt so Claude can give personalised recommendations.
     let extraSystem = '';
+    // B2C customblend — customer building their own 1kg blend (product-customblend.html)
     if (memberId && context === 'customblend') {
       try {
         const cafe24 = require('../lib/cafe24-client');
@@ -184,14 +185,35 @@ router.post('/api/chat', async (req, res) => {
             `취향 분포: ${JSON.stringify(summary.taste_distribution)}\n` +
             `주된 취향: ${summary.dominant_taste || '-'}\n\n` +
             `위 내역을 참고해서 커스텀 블렌드를 추천하세요. 베이스(50%) · 두 번째(30%) · 세 번째(20%) 비율로 3종 선택.\n` +
-            `선택 가능한 베이스 3종: 콜롬비아 수프리모(고소), 에티오피아 아리차(산뜻), 케냐 엠부(달콤).\n` +
-            `2번째·3번째 6종: 수프리모, 아리차, 에티오피아 구지 타데, 과테말라 아카테낭고, 케냐 엠부, 콜롬비아 디카페인.`;
+            `선택 가능한 베이스 3종: 콜롬비아 수프리모(고소), 에티오피아 아리차 내추럴(산뜻), 콜롬비아 디카페인.\n` +
+            `2번째·3번째 4종: 수프리모, 아리차 내추럴, 아리차 워시드, 콜롬비아 디카페인.`;
         } else {
-          extraSystem = `\n\n【고객 구매 내역】\n해당 회원의 주문 내역이 없습니다. 일반 질문 기반으로 커스텀 블렌드를 추천하세요.`;
+          extraSystem = `\n\n【고객 구매 내역】\n해당 회원의 주문 내역이 없습니다. 일반 질문 기반으로 커스텀 블렌드를 추천하세요. 베이스 3종(수프리모/아리차내추럴/디카페인) + 2번째·3번째 4종(수프리모/아리차내추럴/아리차워시드/디카페인) 중 선택.`;
         }
       } catch (e) {
         console.warn('[chat] order summary fetch failed:', e.message);
       }
+    }
+
+    // B2B custom blend — wholesale sample requester (wholesale-sample.html)
+    if (context === 'customblend-b2b') {
+      extraSystem = `\n\n【B2B 커스텀 블렌드 샘플 가이드】\n` +
+        `사용자는 사업자(카페·로스터리·기업)로, 무료 샘플 요청 폼에서 "AI 커스텀 블렌드"를 선택했습니다.\n` +
+        `목표: 사용자의 사업 컨셉·메뉴·예상 추출 방식·맛 선호를 파악해 ORAUND가 개발할 커스텀 블렌드 스펙을 정리.\n\n` +
+        `대화 흐름 (3~5문답으로 마무리):\n` +
+        `1. 사업 유형 (개인 카페 / 호텔 / 기업 사무실 / 어메니티 등)과 월 예상 사용량.\n` +
+        `2. 메인 메뉴 (에스프레소 베이스 / 핸드드립 / 콜드브루 / 라떼 중심 등).\n` +
+        `3. 맛 방향 (고소·다크초콜릿 / 산뜻·과일향 / 달콤·캐러멜 등) + 로스팅 강도 (라이트/미디엄/다크).\n` +
+        `4. 참고 원두 (다른 로스터의 어떤 블렌드와 비슷한 느낌?).\n\n` +
+        `필요한 정보를 다 얻으면 마지막에 다음 형식으로 정리하세요:\n` +
+        `"【커스텀 블렌드 요청 정리】\n` +
+        `- 사업 유형: ...\n` +
+        `- 메인 메뉴: ...\n` +
+        `- 맛 방향·로스팅: ...\n` +
+        `- 참고 원두: ...\n` +
+        `- 추천 베이스 (예상): 운트 블렌드 70% + ... 등"\n\n` +
+        `사용자가 이 정리를 보고 폼의 'AI와 함께 만든 블렌드 내역' 필드에 복사할 수 있도록 명확하게.\n` +
+        `B2B MOQ는 4kg, 무료 샘플은 400g × 최대 2종. 견적 단가는 사업팀이 별도 안내.`;
     }
 
     console.log(
