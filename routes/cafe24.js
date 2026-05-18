@@ -117,4 +117,69 @@ router.get('/api/cafe24/me/orders', async (req, res) => {
   }
 });
 
+// === CUSTOMER: past 1kg custom blend orders ===
+// Returns up to 5 most-recent purchases of product_no=131, so the customer
+// can one-click reorder a blend they previously bought without rebuilding
+// the selection. The frontend already has CODE_MAP to decode item_code →
+// bean trio, so we just return raw items here.
+router.get('/api/cafe24/me/customblend-history', async (req, res) => {
+  const memberId = (req.query.member_id || '').trim();
+  if (!memberId) {
+    return res.status(400).json({ error: 'member_id required' });
+  }
+
+  try {
+    // We need ~6 months for "previous order" UX. Cafe24 caps at 3 months per
+    // call, so we make two calls and merge.
+    const orders85 = await cafe24.getCustomerOrders(memberId, { daysBack: 85 }).catch(() => []);
+    // Older window (86–170 days back)
+    let ordersOlder = [];
+    try {
+      const today = new Date();
+      const end = new Date(today); end.setDate(today.getDate() - 86);
+      const start = new Date(today); start.setDate(today.getDate() - 170);
+      const fmt = (d) => d.toISOString().slice(0, 10);
+      ordersOlder = await cafe24.getCustomerOrders(memberId, {
+        startDate: fmt(start), endDate: fmt(end),
+      });
+    } catch (e) { /* ignore */ }
+
+    const allOrders = [...orders85, ...ordersOlder];
+
+    // Filter: items with product_no === 131 (1kg custom blend)
+    const blends = [];
+    for (const o of allOrders) {
+      for (const it of (o.items || [])) {
+        if (String(it.product_no) === '131') {
+          blends.push({
+            order_id: o.order_id,
+            ordered_at: o.ordered_at,
+            item_code: it.variant_code,
+            product_name: it.product_name,
+            option_value: it.option_value,
+            quantity: parseFloat(it.quantity) || 1,
+          });
+        }
+      }
+    }
+
+    // Dedupe by item_code (same combo bought multiple times → show once, with last date)
+    const seen = {};
+    for (const b of blends) {
+      const k = b.item_code;
+      if (!seen[k] || b.ordered_at > seen[k].ordered_at) {
+        seen[k] = b;
+      }
+    }
+    const result = Object.values(seen)
+      .sort((a, b) => (b.ordered_at || '').localeCompare(a.ordered_at || ''))
+      .slice(0, 5);
+
+    res.json({ count: result.length, blends: result });
+  } catch (e) {
+    console.error('[cafe24/customblend-history]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = router;
