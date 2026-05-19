@@ -5,15 +5,14 @@
 // Flow:
 //   1. 프론트에서 {sessionId, name, phone, email, company, notes, transcript} 로 POST
 //   2. consultation_request 테이블에 저장 (DB 없어도 동작 — 로그로만 남김)
-//   3. nodemailer 로 info@oraund.com + bywockd@gmail.com 에 메일 발송
-//      SMTP_* 환경변수가 없으면 console 에 찍고 email_sent=false 로 저장
+//   3. Resend API 로 info@oraund.com + bywockd@gmail.com 에 메일 발송
+//      RESEND_API_KEY 환경변수가 없으면 console 에 찍고 email_sent=false 로 저장
 //
 // 환경변수 (선택):
-//   SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM
+//   RESEND_API_KEY, RESEND_FROM (기본: ORAUND <noreply@send.oraund.com>)
 //   CONSULT_TO (기본: info@oraund.com,bywockd@gmail.com)
 
 const express = require('express');
-const nodemailer = require('nodemailer');
 
 const db = require('../db');
 
@@ -22,29 +21,13 @@ const router = express.Router();
 const CONSULT_TO = (process.env.CONSULT_TO || 'info@oraund.com,bywockd@gmail.com')
   .split(',').map(s => s.trim()).filter(Boolean);
 
-// SMTP 설정이 있는지 체크. 하나라도 없으면 dry-run 모드.
-const SMTP_CONFIGURED = !!(
-  process.env.SMTP_HOST && process.env.SMTP_PORT &&
-  process.env.SMTP_USER && process.env.SMTP_PASS
-);
+const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
+const RESEND_FROM = process.env.RESEND_FROM || 'ORAUND <noreply@send.oraund.com>';
 
-let transporter = null;
-if (SMTP_CONFIGURED) {
-  transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: parseInt(process.env.SMTP_PORT, 10),
-    secure: parseInt(process.env.SMTP_PORT, 10) === 465,
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
-    },
-    connectionTimeout: 10000,
-    greetingTimeout: 10000,
-    socketTimeout: 10000,
-  });
-  console.log('[consult] SMTP transporter ready');
+if (RESEND_API_KEY) {
+  console.log('[consult] Resend API key configured — email sending ENABLED');
 } else {
-  console.warn('[consult] SMTP_* env vars missing — email sending is DISABLED (logs only)');
+  console.warn('[consult] RESEND_API_KEY missing — email sending is DISABLED (logs only)');
 }
 
 
@@ -145,29 +128,40 @@ router.post('/api/consult', async (req, res) => {
     </div>
   `;
 
-  // 3) 이메일 발송 (또는 dry-run)
+  // 3) Resend API 로 이메일 발송 (또는 dry-run)
   let emailSent = false;
   let emailError = null;
 
-  if (!transporter) {
+  if (!RESEND_API_KEY) {
     console.log('[consult] DRY-RUN — would have sent to:', CONSULT_TO);
     console.log('[consult] subject:', subject);
-    emailError = 'SMTP_NOT_CONFIGURED';
+    emailError = 'RESEND_API_KEY_NOT_SET';
   } else {
     try {
-      await transporter.sendMail({
-        from: process.env.SMTP_FROM || process.env.SMTP_USER,
-        to: CONSULT_TO.join(','),
-        replyTo: email || undefined,
-        subject,
-        text: plainBody,
-        html: htmlBody,
+      const resp = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${RESEND_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: RESEND_FROM,
+          to: CONSULT_TO,
+          reply_to: email || undefined,
+          subject,
+          text: plainBody,
+          html: htmlBody,
+        }),
       });
+      if (!resp.ok) {
+        const errBody = await resp.text();
+        throw new Error(`Resend ${resp.status}: ${errBody}`);
+      }
       emailSent = true;
-      console.log('[consult] email sent to', CONSULT_TO.join(','));
+      console.log('[consult] email sent via Resend to', CONSULT_TO.join(','));
     } catch (err) {
       emailError = err.message;
-      console.error('[consult] sendMail failed:', err.message);
+      console.error('[consult] Resend sendMail failed:', err.message);
     }
   }
 
