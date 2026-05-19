@@ -9,7 +9,7 @@
 //      RESEND_API_KEY 환경변수가 없으면 console 에 찍고 email_sent=false 로 저장
 //
 // 환경변수 (선택):
-//   RESEND_API_KEY, RESEND_FROM (기본: ORAUND <noreply@send.oraund.com>)
+//   RESEND_API_KEY, RESEND_FROM (기본: ORAUND <noreply@oraund.com>)
 //   CONSULT_TO (기본: info@oraund.com,bywockd@gmail.com)
 
 const express = require('express');
@@ -22,7 +22,7 @@ const CONSULT_TO = (process.env.CONSULT_TO || 'info@oraund.com,bywockd@gmail.com
   .split(',').map(s => s.trim()).filter(Boolean);
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
-const RESEND_FROM = process.env.RESEND_FROM || 'ORAUND <noreply@send.oraund.com>';
+const RESEND_FROM = process.env.RESEND_FROM || 'ORAUND <noreply@oraund.com>';
 
 if (RESEND_API_KEY) {
   console.log('[consult] Resend API configured — email via', RESEND_FROM);
