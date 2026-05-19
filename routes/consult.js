@@ -25,9 +25,9 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
 const RESEND_FROM = process.env.RESEND_FROM || 'ORAUND <noreply@send.oraund.com>';
 
 if (RESEND_API_KEY) {
-  console.log('[consult] Resend API key configured — email sending ENABLED');
+  console.log('[consult] Resend API configured — email via', RESEND_FROM);
 } else {
-  console.warn('[consult] RESEND_API_KEY missing — email sending is DISABLED (logs only)');
+  console.warn('[consult] RESEND_API_KEY not set — email DISABLED (dry-run)');
 }
 
 
